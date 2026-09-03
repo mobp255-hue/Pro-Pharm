@@ -1,11 +1,12 @@
 # ============================================================================
-# PHARMACY MANAGEMENT SYSTEM – PRODUCTION EDITION
+# PHARMACY MANAGEMENT SYSTEM – FINAL PRODUCTION EDITION
 # ============================================================================
-# This is the complete, single‑file application.
-# It uses Streamlit for the UI, PostgreSQL (Supabase) for data,
-# and includes all modules: Dashboard, Inventory, POS, Customers,
-# Prescriptions, Suppliers, Purchase Orders, Stock Adjustments,
-# Sales Returns, Reports (with AI forecasting), and Settings.
+# - Auto‑handles missing optional libraries (Prophet, face_recognition)
+# - Robust database connection with pooling and retry
+# - All features: Inventory, POS, Customers, Prescriptions, Suppliers,
+#   Purchase Orders, Stock Adjustments, Sales Returns, Reports, Settings
+# - Premium responsive UI, digital stamp, biometric support (if installed)
+# - Works with st.secrets (Streamlit Cloud) or .env (local)
 # ============================================================================
 
 import streamlit as st
@@ -25,7 +26,7 @@ import hmac
 import time
 import re
 
-# PDF & barcode
+# PDF & barcode – these are always required
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
@@ -34,7 +35,7 @@ from reportlab.lib.units import inch
 import barcode
 from barcode.writer import ImageWriter
 
-# Optional biometric
+# --- Optional libraries: gracefully handle missing ---
 try:
     import face_recognition
     import cv2
@@ -42,14 +43,13 @@ try:
 except ImportError:
     BIOMETRIC_AVAILABLE = False
 
-# Optional Prophet
 try:
     from prophet import Prophet
     PROPHET_AVAILABLE = True
 except ImportError:
     PROPHET_AVAILABLE = False
 
-# sklearn fallback
+# sklearn is usually installed (required for fallback forecasting)
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
@@ -93,19 +93,27 @@ if not params["password"]:
     st.error("❌ Database password not set. Please set SUPABASE_PASSWORD in .env or st.secrets.")
     st.stop()
 
-try:
-    connection_pool = pool.SimpleConnectionPool(
-        1, 20,
-        host=params["host"],
-        port=params["port"],
-        dbname=params["dbname"],
-        user=params["user"],
-        password=params["password"],
-        sslmode=params["sslmode"]
-    )
-except Exception as e:
-    st.error(f"❌ Database connection failed: {e}")
-    st.stop()
+# Retry logic for connection pool
+max_retries = 3
+retry_delay = 2
+for attempt in range(max_retries):
+    try:
+        connection_pool = pool.SimpleConnectionPool(
+            1, 20,
+            host=params["host"],
+            port=params["port"],
+            dbname=params["dbname"],
+            user=params["user"],
+            password=params["password"],
+            sslmode=params["sslmode"]
+        )
+        break
+    except Exception as e:
+        if attempt < max_retries - 1:
+            time.sleep(retry_delay)
+        else:
+            st.error(f"❌ Database connection failed after {max_retries} attempts: {e}")
+            st.stop()
 
 def get_db_connection():
     """Get a connection from the pool."""
@@ -614,7 +622,6 @@ st.markdown("""
         @media (max-width: 600px) { .stColumns { flex-direction: column !important; } }
         .stAlert { margin-top: 0.5rem; border-radius: 8px; }
         h1, h2, h3 { font-family: 'Inter', sans-serif; letter-spacing: -0.01em; }
-        .stTable { border-collapse: separate; border-spacing: 0; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -624,7 +631,7 @@ if 'logged_in' not in st.session_state:
 if 'cart' not in st.session_state:
     st.session_state.cart = []
 if 'use_biometric' not in st.session_state:
-    st.session_state.use_biometric = False
+    st.session_state.use_biometric = BIOMETRIC_AVAILABLE
 
 # ============================================================================
 # 6. LOGIN PAGE
@@ -1747,7 +1754,6 @@ def show_settings():
     enable_biometric = st.checkbox("Enable biometric login (face recognition)", value=st.session_state.use_biometric)
     if enable_biometric != st.session_state.use_biometric:
         st.session_state.use_biometric = enable_biometric
-        # Save to environment (not persistent across restarts – but we can store in secrets)
         st.success("Biometric setting updated. Relogin to apply.")
         st.experimental_rerun()
 
@@ -1806,5 +1812,5 @@ if __name__ == "__main__":
     if not st.session_state.logged_in:
         login_page()
     else:
-
         main_app()
+        
