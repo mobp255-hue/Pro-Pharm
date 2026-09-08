@@ -1,11 +1,11 @@
+
 # ============================================================================
-# PHARMACY MANAGEMENT SYSTEM – FINAL PRODUCTION EDITION
+# PHARMACY MANAGEMENT SYSTEM – ULTIMATE PRODUCTION EDITION
 # ============================================================================
-# - Auto‑handles missing optional libraries (Prophet, face_recognition)
-# - Robust database connection with pooling and retry
-# - All features: Inventory, POS, Customers, Prescriptions, Suppliers,
+# - Full feature set: Inventory, POS, Customers, Prescriptions, Suppliers,
 #   Purchase Orders, Stock Adjustments, Sales Returns, Reports, Settings
-# - Premium responsive UI, digital stamp, biometric support (if installed)
+# - Premium responsive UI, digital stamp, biometric login (optional)
+# - DNS fallback – automatically resolves hostname to IP to bypass DNS errors
 # - Works with st.secrets (Streamlit Cloud) or .env (local)
 # ============================================================================
 
@@ -25,8 +25,9 @@ from io import BytesIO
 import hmac
 import time
 import re
+import socket  # for DNS resolution fallback
 
-# PDF & barcode – these are always required
+# PDF & barcode – always required
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
@@ -35,7 +36,7 @@ from reportlab.lib.units import inch
 import barcode
 from barcode.writer import ImageWriter
 
-# --- Optional libraries: gracefully handle missing ---
+# --- Optional libraries (gracefully handle missing) ---
 try:
     import face_recognition
     import cv2
@@ -49,28 +50,43 @@ try:
 except ImportError:
     PROPHET_AVAILABLE = False
 
-# sklearn is usually installed (required for fallback forecasting)
+# sklearn is usually installed
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
 # ============================================================================
-# 1. DATABASE CONNECTION (with st.secrets fallback)
+# 1. DATABASE CONNECTION (with DNS fallback)
 # ============================================================================
 
 def get_db_params():
-    """Return database connection parameters from st.secrets (cloud) or .env (local)."""
+    """Return connection parameters with automatic IP resolution to bypass DNS issues."""
     try:
         # On Streamlit Cloud, secrets are available
         secrets = st.secrets
         if "supabase" in secrets:
             db = secrets["supabase"]
+            host = db["host"]
+            port = db["port"]
+            dbname = db["database"]
+            user = db["user"]
+            password = db["password"]
+            ssl = db.get("ssl", "require")
+            # Try to resolve hostname to IP
+            try:
+                host_ip = socket.gethostbyname(host)
+                st.success(f"✅ Resolved {host} → {host_ip}")
+            except socket.gaierror:
+                # Fallback to explicit IP if provided, else keep hostname
+                host_ip = db.get("hostaddr", host)
+                st.warning(f"⚠️ DNS resolution failed, using fallback: {host_ip}")
             return {
-                "host": db["host"],
-                "port": db["port"],
-                "dbname": db["database"],
-                "user": db["user"],
-                "password": db["password"],
-                "sslmode": db.get("ssl", "require")
+                "host": host,
+                "hostaddr": host_ip,
+                "port": port,
+                "dbname": dbname,
+                "user": user,
+                "password": password,
+                "sslmode": ssl
             }
     except (AttributeError, KeyError):
         pass
@@ -78,8 +94,14 @@ def get_db_params():
     # Fallback to .env for local development
     from dotenv import load_dotenv
     load_dotenv()
+    host = os.getenv("SUPABASE_HOST", "localhost")
+    try:
+        host_ip = socket.gethostbyname(host)
+    except socket.gaierror:
+        host_ip = os.getenv("SUPABASE_HOST_IP", host)
     return {
-        "host": os.getenv("SUPABASE_HOST", "localhost"),
+        "host": host,
+        "hostaddr": host_ip,
         "port": os.getenv("SUPABASE_PORT", "5432"),
         "dbname": os.getenv("SUPABASE_DATABASE", "postgres"),
         "user": os.getenv("SUPABASE_USER", "postgres"),
@@ -98,9 +120,10 @@ max_retries = 3
 retry_delay = 2
 for attempt in range(max_retries):
     try:
+        # Use hostaddr to bypass DNS
         connection_pool = pool.SimpleConnectionPool(
             1, 20,
-            host=params["host"],
+            host=params["hostaddr"],    # IP address (or hostname if fallback)
             port=params["port"],
             dbname=params["dbname"],
             user=params["user"],
@@ -1813,4 +1836,3 @@ if __name__ == "__main__":
         login_page()
     else:
         main_app()
-        
